@@ -1,0 +1,9 @@
+[package]
+name = "pool"
+version = "0.1.0"
+authors = ["cssivision <cssivision@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = { version = "0.2", features = ["rt-core", "time"] }
+async-trait = "0.1"
