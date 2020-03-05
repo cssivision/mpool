@@ -3,6 +3,10 @@ name = "mpool"
 version = "0.1.0"
 authors = ["cssivision <cssivision@gmail.com>"]
 edition = "2018"
+description = "A generic connection pool"
+repository = "https://github.com/cssivision/mpool"
+readme = "README.md"
+keywords = ["async", "await", "pool", "connection pool", "tokio"]
 
 [dependencies]
 tokio = { version = "0.2", features = ["rt-core", "time"] }
