@@ -46,6 +46,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::time::{delay_for, timeout};
 
+#[cfg(test)]
+mod test;
+
 /// A trait which provides connection-specific functionality.
 #[async_trait]
 pub trait ManageConnection: Send + Sync + 'static {
