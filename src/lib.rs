@@ -1,6 +1,44 @@
+//! A generic connection pool.
+//!
+//! Implementors of the `ManageConnection` trait provide the specific
+//!  logic to create and check the health of connections.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use std::io;
+//! use std::net::SocketAddr;
+//!
+//! use async_trait::async_trait;
+//! use mpool::{ManageConnection, Pool};
+//! use tokio::net::TcpStream;
+//!
+//! struct MyPool {
+//!     addr: SocketAddr,
+//! }
+//!
+//! #[async_trait]
+//! impl ManageConnection for MyPool {
+//!     type Connection = TcpStream;
+//!
+//!     async fn connect(&self) -> io::Result<Self::Connection> {
+//!         TcpStream::connect(self.addr).await
+//!     }
+//!
+//!     async fn check(&self, _conn: &mut Self::Connection) -> io::Result<()> {
+//!         Ok(())
+//!     }
+//!
+//!     async fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+//!         false
+//!     }
+//! }
+//! ```
+
 use std::collections::LinkedList;
 use std::fmt;
 use std::io;
+use std::marker::PhantomData;
 use std::ops::{Add, Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -34,14 +72,21 @@ fn other(msg: &str) -> io::Error {
 }
 
 /// A builder for a connection pool.
-pub struct Builder {
+pub struct Builder<M>
+where
+    M: ManageConnection,
+{
     pub max_lifetime: Option<Duration>,
     pub idle_timeout: Option<Duration>,
     pub connection_timeout: Option<Duration>,
     pub max_size: u32,
+    _pd: PhantomData<M>,
 }
 
-impl fmt::Debug for Builder {
+impl<M> fmt::Debug for Builder<M>
+where
+    M: ManageConnection,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Builder")
             .field("max_size", &self.max_size)
@@ -52,22 +97,29 @@ impl fmt::Debug for Builder {
     }
 }
 
-impl Default for Builder {
+impl<M> Default for Builder<M>
+where
+    M: ManageConnection,
+{
     fn default() -> Self {
         Builder {
             max_lifetime: Some(Duration::from_secs(60 * 30)),
             idle_timeout: Some(Duration::from_secs(3 * 60)),
             connection_timeout: Some(Duration::from_secs(3)),
             max_size: 0,
+            _pd: PhantomData,
         }
     }
 }
 
-impl Builder {
+impl<M> Builder<M>
+where
+    M: ManageConnection,
+{
     // Constructs a new `Builder`.
     ///
     /// Parameters are initialized with their default values.
-    pub fn new() -> Builder {
+    pub fn new() -> Self {
         Builder::default()
     }
 
@@ -133,7 +185,7 @@ impl Builder {
     }
 
     /// Consumes the builder, returning a new, initialized pool.
-    pub fn build<M>(&self, manager: M) -> Pool<M>
+    pub fn build(&self, manager: M) -> Pool<M>
     where
         M: ManageConnection,
     {
@@ -213,6 +265,16 @@ impl<M> Pool<M>
 where
     M: ManageConnection,
 {
+    /// Creates a new connection pool with a default configuration.
+    pub fn new(manager: M) -> Pool<M> {
+        Pool::builder().build(manager)
+    }
+
+    /// Returns a builder type to configure a new pool.
+    pub fn builder() -> Builder<M> {
+        Builder::new()
+    }
+
     fn interval<'a>(&'a self) -> MutexGuard<'a, PoolInternals<M::Connection>> {
         self.0.intervals.lock().unwrap()
     }
