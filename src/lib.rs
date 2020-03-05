@@ -1,68 +1,138 @@
 use std::collections::LinkedList;
+use std::fmt;
 use std::io;
-use std::ops::Add;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Add, Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::time::{delay_for, timeout};
 
+/// A trait which provides connection-specific functionality.
 #[async_trait]
 pub trait ManageConnection: Send + Sync + 'static {
+    /// The connection type this manager deals with.
     type Connection: Send + 'static;
 
+    /// Attempts to create a new connection.
     async fn connect(&self) -> io::Result<Self::Connection>;
+
+    /// Check if the connection is still valid, check background every `check_interval`.
+    ///
+    /// A standard implementation would check if a simple query like `PING` succee,
+    /// if the `Connection` is broken, error should return.
     async fn check(&self, conn: &mut Self::Connection) -> io::Result<()>;
+
+    /// This will be called every time a connection is get from
+    /// the pool, so it should be fast. If it returns `true`, the
+    /// connection will be discarded.
+    async fn has_broken(&self, conn: &mut Self::Connection) -> bool;
 }
 
 fn other(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::Other, msg)
 }
 
+/// A builder for a connection pool.
 pub struct Builder {
     pub max_lifetime: Option<Duration>,
     pub idle_timeout: Option<Duration>,
-    pub dial_timeout: Option<Duration>,
+    pub connection_timeout: Option<Duration>,
     pub max_size: u32,
+}
+
+impl fmt::Debug for Builder {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Builder")
+            .field("max_size", &self.max_size)
+            .field("max_lifetime", &self.max_lifetime)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("connection_timeout", &self.connection_timeout)
+            .finish()
+    }
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Builder {
             max_lifetime: Some(Duration::from_secs(60 * 30)),
-            idle_timeout: Some(Duration::from_secs(60)),
-            dial_timeout: Some(Duration::from_millis(1000)),
+            idle_timeout: Some(Duration::from_secs(3 * 60)),
+            connection_timeout: Some(Duration::from_secs(3)),
             max_size: 0,
         }
     }
 }
 
 impl Builder {
+    // Constructs a new `Builder`.
+    ///
+    /// Parameters are initialized with their default values.
     pub fn new() -> Builder {
         Builder::default()
     }
 
+    /// Sets the maximum lifetime of connections in the pool.
+    ///
+    /// If a connection reaches its maximum lifetime while checked out it will
+    /// be closed when it is returned to the pool.
+    ///
+    /// Defaults to 30 minutes.
+    ///
+    /// # Panics
+    ///
+    /// use default if `max_lifetime` is the zero `Duration`.
     pub fn max_lifetime(mut self, max_lifetime: Option<Duration>) -> Self {
-        self.max_lifetime = max_lifetime;
-        self
+        if max_lifetime == Some(Duration::from_secs(0)) {
+            self
+        } else {
+            self.max_lifetime = max_lifetime;
+            self
+        }
     }
 
+    /// Sets the idle timeout used by the pool.
+    ///
+    /// If set, connections will be closed after exceed idle time.
+    ///
+    /// Defaults to 3 minutes.
+    ///
+    /// use default if `idle_timeout` is the zero `Duration`.
     pub fn idle_timeout(mut self, idle_timeout: Option<Duration>) -> Self {
-        self.idle_timeout = idle_timeout;
-        self
+        if idle_timeout == Some(Duration::from_secs(0)) {
+            self
+        } else {
+            self.idle_timeout = idle_timeout;
+            self
+        }
     }
 
-    pub fn dial_timeout(mut self, dial_timeout: Option<Duration>) -> Self {
-        self.dial_timeout = dial_timeout;
-        self
+    /// Sets the connection timeout used by the pool.
+    ///
+    /// Calls to `Pool::get` will wait this long for a connection to become
+    /// available before returning an error.
+    ///
+    /// Defaults to 3 seconds.
+    /// don't timeout if `connection_timeout` is the zero duration
+    pub fn connection_timeout(mut self, connection_timeout: Option<Duration>) -> Self {
+        if connection_timeout == Some(Duration::from_secs(0)) {
+            self
+        } else {
+            self.connection_timeout = connection_timeout;
+            self
+        }
     }
 
+    /// Sets the maximum number of connections managed by the pool.
+    ///
+    /// Defaults to 10.
+    ///
+    /// no limited if `max_size` is 0.
     pub fn max_size(mut self, max_size: u32) -> Self {
         self.max_size = max_size;
         self
     }
 
+    /// Consumes the builder, returning a new, initialized pool.
     pub fn build<M>(&self, manager: M) -> Pool<M>
     where
         M: ManageConnection,
@@ -76,7 +146,7 @@ impl Builder {
             intervals: Mutex::new(intervals),
             max_lifetime: self.max_lifetime,
             idle_timeout: self.idle_timeout,
-            dial_timeout: self.dial_timeout,
+            connection_timeout: self.connection_timeout,
             max_size: self.max_size,
             manager,
         };
@@ -226,9 +296,15 @@ where
         }
     }
 
-    async fn dial_timeout(&self, dial_timeout: Option<Duration>) -> io::Result<M::Connection> {
-        if let Some(dial_timeout) = dial_timeout {
-            let conn = match timeout(dial_timeout, self.0.manager.connect()).await {
+    /// Retrieves a connection from the pool.
+    ///
+    /// Waits for at most the connection timeout before returning an error.
+    pub async fn get_timeout(
+        &self,
+        connection_timeout: Option<Duration>,
+    ) -> io::Result<M::Connection> {
+        if let Some(connection_timeout) = connection_timeout {
+            let conn = match timeout(connection_timeout, self.0.manager.connect()).await {
                 Ok(s) => match s {
                     Ok(s) => s,
                     Err(e) => {
@@ -247,6 +323,10 @@ where
         }
     }
 
+    /// Retrieves a connection from the pool.
+    ///
+    /// Waits for at most the configured connection timeout before returning an
+    /// error.
     pub async fn get(&self) -> io::Result<Connection<M>> {
         if let Some(conn) = self.pop_front() {
             return Ok(Connection {
@@ -259,8 +339,7 @@ where
             return Err(other("exceed limit"));
         }
 
-        let conn = self.dial_timeout(self.0.dial_timeout).await?;
-
+        let conn = self.get_timeout(self.0.connection_timeout).await?;
         self.incr_active();
         return Ok(Connection {
             conn: Some(IdleConn {
@@ -285,7 +364,7 @@ where
     intervals: Mutex<PoolInternals<M::Connection>>,
     max_lifetime: Option<Duration>,
     idle_timeout: Option<Duration>,
-    dial_timeout: Option<Duration>,
+    connection_timeout: Option<Duration>,
     max_size: u32,
     manager: M,
 }
