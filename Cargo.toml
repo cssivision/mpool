@@ -5,6 +5,7 @@ authors = ["cssivision <cssivision@gmail.com>"]
 edition = "2018"
 description = "A generic connection pool"
 repository = "https://github.com/cssivision/mpool"
+homepage = "https://github.com/cssivision/mpool"
 readme = "README.md"
 license = "MIT"
 keywords = ["async", "await", "pool", "connection-pool", "tokio"]
