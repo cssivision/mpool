@@ -29,7 +29,7 @@
 //!         Ok(())
 //!     }
 //!
-//!     async fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+//!     async fn is_valid(&self, _conn: &mut Self::Connection) -> bool {
 //!         false
 //!     }
 //! }
@@ -63,11 +63,6 @@ pub trait ManageConnection: Send + Sync + 'static {
     /// A standard implementation would check if a simple query like `PING` succee,
     /// if the `Connection` is broken, error should return.
     async fn check(&self, conn: &mut Self::Connection) -> io::Result<()>;
-
-    /// This will be called every time a connection is get from
-    /// the pool, so it should be fast. If it returns `true`, the
-    /// connection will be discarded.
-    async fn has_broken(&self, conn: &mut Self::Connection) -> bool;
 }
 
 fn other(msg: &str) -> io::Error {
@@ -83,6 +78,8 @@ where
     pub idle_timeout: Option<Duration>,
     pub connection_timeout: Option<Duration>,
     pub max_size: u32,
+    pub max_retry_times: u32,
+    pub check_interval: Option<Duration>,
     _pd: PhantomData<M>,
 }
 
@@ -109,7 +106,9 @@ where
             max_lifetime: Some(Duration::from_secs(60 * 30)),
             idle_timeout: Some(Duration::from_secs(3 * 60)),
             connection_timeout: Some(Duration::from_secs(3)),
+            check_interval: Some(Duration::from_secs(3)),
             max_size: 0,
+            max_retry_times: 3,
             _pd: PhantomData,
         }
     }
@@ -187,6 +186,11 @@ where
         self
     }
 
+    pub fn check_interval(mut self, interval: Option<Duration>) -> Self {
+        self.check_interval = interval;
+        self
+    }
+
     /// Consumes the builder, returning a new, initialized pool.
     pub fn build(&self, manager: M) -> Pool<M>
     where
@@ -203,6 +207,7 @@ where
             idle_timeout: self.idle_timeout,
             connection_timeout: self.connection_timeout,
             max_size: self.max_size,
+            check_interval: self.check_interval,
             manager,
         };
 
@@ -324,30 +329,29 @@ where
     }
 
     async fn check(mut self) {
-        loop {
-            delay_for(Duration::from_secs(3)).await;
-
-            let n = self.idle_count();
-            for _ in 0..n {
-                if let Some(mut conn) = self.pop_front() {
-                    if self.exceed_idle_timeout(&conn) || self.exceed_max_lifetime(&conn) {
-                        self.decr_active();
-                        continue;
-                    }
-
-                    match self.0.manager.check(&mut conn.conn).await {
-                        Ok(_) => {
-                            self.push_back(conn);
+        if let Some(interval) = self.0.check_interval {
+            loop {
+                delay_for(interval).await;
+                let n = self.idle_count();
+                for _ in 0..n {
+                    if let Some(mut conn) = self.pop_front() {
+                        if self.exceed_idle_timeout(&conn) || self.exceed_max_lifetime(&conn) {
+                            self.decr_active();
                             continue;
                         }
-                        Err(_) => {
-                            self.decr_active();
+                        match self.0.manager.check(&mut conn.conn).await {
+                            Ok(_) => {
+                                self.push_back(conn);
+                                continue;
+                            }
+                            Err(_) => {
+                                self.decr_active();
+                            }
                         }
+                        continue;
                     }
-                    continue;
+                    break;
                 }
-
-                break;
             }
         }
     }
@@ -439,6 +443,7 @@ where
     idle_timeout: Option<Duration>,
     connection_timeout: Option<Duration>,
     max_size: u32,
+    check_interval: Option<Duration>,
     manager: M,
 }
 

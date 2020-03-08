@@ -13,4 +13,4 @@ tokio = { version = "0.2", features = ["rt-core", "time"] }
 async-trait = "0.1"
 
 [dev-dependencies]
-tokio = { version = "0.2", features = ["macros", "net"] }
+tokio = { version = "0.2", features = ["full"] }
