@@ -37,6 +37,30 @@ async fn test_max_size_ok() {
     assert_eq!(pool.interval().active, 5);
     assert!(pool.get().await.is_err());
     assert_eq!(pool.interval().active, 5);
-    drop(conns);
-    assert_eq!(pool.interval().active, 0);
+}
+
+#[tokio::test]
+async fn test_drop_conn() {
+    let manager = FakeManager;
+    let pool = Pool::builder().max_size(2).build(manager);
+
+    let conn1 = pool.get().await.unwrap();
+    assert_eq!(pool.interval().active, 1);
+    let conn2 = pool.get().await.unwrap();
+    assert_eq!(pool.interval().active, 2);
+    drop(conn1);
+    assert_eq!(pool.interval().active, 2);
+    drop(conn2);
+    assert_eq!(pool.interval().active, 2);
+    let conn3 = pool.get().await.unwrap();
+    assert_eq!(pool.interval().active, 2);
+}
+
+#[tokio::test]
+async fn test_get_timeout() {
+    let manager = FakeManager;
+    let pool = Pool::builder()
+        .max_size(2)
+        .connection_timeout(Some(Duration::from_secs(1)))
+        .build(manager);
 }

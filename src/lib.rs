@@ -426,7 +426,6 @@ where
 
     fn put(&mut self, mut conn: IdleConn<M::Connection>) {
         conn.last_visited = Instant::now();
-        self.decr_active();
         self.push_back(conn);
     }
 }
