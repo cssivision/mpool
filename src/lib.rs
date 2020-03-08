@@ -1,7 +1,7 @@
 //! A generic connection pool.
 //!
 //! Implementors of the `ManageConnection` trait provide the specific
-//!  logic to create and check the health of connections.
+//! logic to create and check the health of connections.
 //!
 //! # Example
 //!
@@ -278,7 +278,7 @@ where
         Builder::new()
     }
 
-    fn interval<'a>(&'a self) -> MutexGuard<'a, PoolInternals<M::Connection>> {
+    pub(crate) fn interval<'a>(&'a self) -> MutexGuard<'a, PoolInternals<M::Connection>> {
         self.0.intervals.lock().unwrap()
     }
 
@@ -400,12 +400,20 @@ where
             });
         }
 
+        self.incr_active();
         if self.exceed_limit() {
+            self.decr_active();
             return Err(other("exceed limit"));
         }
 
-        let conn = self.get_timeout(self.0.connection_timeout).await?;
-        self.incr_active();
+        let conn = self
+            .get_timeout(self.0.connection_timeout)
+            .await
+            .map_err(|e| {
+                self.decr_active();
+                e
+            })?;
+
         return Ok(Connection {
             conn: Some(IdleConn {
                 conn,
@@ -418,6 +426,7 @@ where
 
     fn put(&mut self, mut conn: IdleConn<M::Connection>) {
         conn.last_visited = Instant::now();
+        self.decr_active();
         self.push_back(conn);
     }
 }
