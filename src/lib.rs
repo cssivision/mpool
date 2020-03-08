@@ -28,10 +28,6 @@
 //!     async fn check(&self, _conn: &mut Self::Connection) -> io::Result<()> {
 //!         Ok(())
 //!     }
-//!
-//!     async fn is_valid(&self, _conn: &mut Self::Connection) -> bool {
-//!         false
-//!     }
 //! }
 //! ```
 
@@ -186,6 +182,9 @@ where
         self
     }
 
+    /// Sets the check interval of connections managed by the pool use the `ManageConnection::check`.
+    ///
+    /// Defaults to 3s.
     pub fn check_interval(mut self, interval: Option<Duration>) -> Self {
         self.check_interval = interval;
         self
@@ -217,6 +216,7 @@ where
     }
 }
 
+/// A smart pointer wrapping a connection.
 pub struct Connection<M>
 where
     M: ManageConnection,
@@ -256,6 +256,7 @@ where
     }
 }
 
+/// A generic connection pool.
 pub struct Pool<M>(Arc<SharedPool<M>>)
 where
     M: ManageConnection;
