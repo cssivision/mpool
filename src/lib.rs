@@ -74,7 +74,6 @@ where
     pub idle_timeout: Option<Duration>,
     pub connection_timeout: Option<Duration>,
     pub max_size: u32,
-    pub max_retry_times: u32,
     pub check_interval: Option<Duration>,
     _pd: PhantomData<M>,
 }
@@ -104,7 +103,6 @@ where
             connection_timeout: Some(Duration::from_secs(3)),
             check_interval: Some(Duration::from_secs(3)),
             max_size: 0,
-            max_retry_times: 3,
             _pd: PhantomData,
         }
     }
