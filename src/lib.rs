@@ -126,8 +126,6 @@ where
     ///
     /// Defaults to 30 minutes.
     ///
-    /// # Panics
-    ///
     /// use default if `max_lifetime` is the zero `Duration`.
     pub fn max_lifetime(mut self, max_lifetime: Option<Duration>) -> Self {
         if max_lifetime == Some(Duration::from_secs(0)) {
